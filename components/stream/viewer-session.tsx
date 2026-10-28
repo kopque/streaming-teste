@@ -28,6 +28,7 @@ import {
   normalizeCode,
   sanitizeName,
   sanitizeText,
+  fetchIceServers,
   type ChatMessage,
   type StreamMessage,
 } from '@/lib/stream'
@@ -101,22 +102,36 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
     setMessages([])
     setPhase('connecting')
     const displayName = sanitizeName(name)
-    const { default: PeerCtor } = await import('peerjs')
-    const peer = new PeerCtor({ debug: 0 })
+    const [{ default: PeerCtor }, iceServers] = await Promise.all([import('peerjs'), fetchIceServers()])
+    const peer = new PeerCtor({ debug: 0, config: { iceServers } })
     peerRef.current = peer
+    let receivedStream = false
+    let dataOpen = false
+
+    const fail = (message: string) => {
+      if (peerRef.current !== peer) return
+      clearTimeout(timeout)
+      setError(message)
+      setPhase('form')
+      cleanup()
+    }
 
     const timeout = setTimeout(() => {
-      if (peerRef.current === peer && !callRef.current) {
-        setError('Tempo esgotado ao conectar. Verifique o código e tente novamente.')
-        setPhase('form')
-        cleanup()
-      }
-    }, 20000)
+      if (receivedStream) return
+      fail(
+        dataOpen
+          ? 'Conectado ao anfitrião, mas o vídeo não chegou. As redes podem estar bloqueando conexões diretas (NAT). Tente outra rede ou configure um servidor TURN.'
+          : 'Tempo esgotado ao conectar. Confira o código e se o anfitrião ainda está transmitindo.',
+      )
+    }, 25000)
 
     peer.on('open', () => {
       const conn = peer.connect(PEER_PREFIX + target, { reliable: true, metadata: { name: displayName } })
       connRef.current = conn
-      conn.on('open', () => setPhase((p) => (p === 'connecting' ? 'waiting' : p)))
+      conn.on('open', () => {
+        dataOpen = true
+        setPhase((p) => (p === 'connecting' ? 'waiting' : p))
+      })
       conn.on('data', handleData)
       conn.on('close', () => {
         if (connRef.current !== conn) return
@@ -130,21 +145,33 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
       callRef.current = call
       call.answer()
       call.on('stream', (remote) => {
+        receivedStream = true
         clearTimeout(timeout)
         setStream(remote)
         setPhase('watching')
       })
+      const pc = call.peerConnection
+      pc?.addEventListener('iceconnectionstatechange', () => {
+        if (pc.iceConnectionState === 'failed' && !receivedStream) {
+          fail(
+            'A conexão direta com o anfitrião falhou (NAT/firewall). Tente outra rede ou configure um servidor TURN.',
+          )
+        }
+      })
+    })
+
+    peer.on('disconnected', () => {
+      if (peerRef.current === peer && !peer.destroyed) peer.reconnect()
     })
 
     peer.on('error', (err) => {
-      clearTimeout(timeout)
-      setError(
-        err.type === 'peer-unavailable'
-          ? 'Nenhuma transmissão ativa com esse código.'
-          : 'Não foi possível conectar. Verifique sua conexão e tente novamente.',
-      )
-      setPhase('form')
-      cleanup()
+      if (err.type === 'peer-unavailable') {
+        fail('Nenhuma transmissão ativa com esse código. Confira se o anfitrião ainda está ao vivo.')
+      } else if (err.type === 'network' || err.type === 'socket-error' || err.type === 'server-error') {
+        if (!dataOpen) fail('Não foi possível alcançar o servidor de sinalização. Verifique sua conexão.')
+      } else if (!receivedStream) {
+        fail('Não foi possível conectar. Verifique sua conexão e tente novamente.')
+      }
     })
   }
 

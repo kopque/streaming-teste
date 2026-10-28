@@ -16,6 +16,7 @@ import {
   isStreamMessage,
   sanitizeName,
   sanitizeText,
+  fetchIceServers,
   type ChatMessage,
   type PresetKey,
   type StreamMessage,
@@ -164,9 +165,9 @@ export function HostSession() {
   )
 
   const openPeer = useCallback(
-    (PeerCtor: typeof Peer, attempt: number) => {
+    (PeerCtor: typeof Peer, iceServers: RTCIceServer[], attempt: number) => {
       const nextCode = generateCode()
-      const peer = new PeerCtor(PEER_PREFIX + nextCode, { debug: 0 })
+      const peer = new PeerCtor(PEER_PREFIX + nextCode, { debug: 0, config: { iceServers } })
       peerRef.current = peer
       peer.on('open', () => {
         setCode(nextCode)
@@ -179,10 +180,16 @@ export function HostSession() {
       peer.on('error', (err) => {
         if (err.type === 'unavailable-id' && attempt < 3) {
           peer.destroy()
-          openPeer(PeerCtor, attempt + 1)
+          openPeer(PeerCtor, iceServers, attempt + 1)
           return
         }
-        if (err.type === 'peer-unavailable') return
+        if (err.type === 'peer-unavailable' || err.type === 'webrtc') return
+        if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+          if (peerRef.current === peer && !peer.destroyed) {
+            setTimeout(() => peer.disconnected && !peer.destroyed && peer.reconnect(), 1500)
+            return
+          }
+        }
         setError('Falha ao conectar ao servidor de sinalização. Verifique sua conexão e tente novamente.')
         stopRef.current()
       })
@@ -221,8 +228,8 @@ export function HostSession() {
       videoRef.current.srcObject = stream
       videoRef.current.play().catch(() => {})
     }
-    const { default: PeerCtor } = await import('peerjs')
-    openPeer(PeerCtor, 0)
+    const [{ default: PeerCtor }, iceServers] = await Promise.all([import('peerjs'), fetchIceServers()])
+    openPeer(PeerCtor, iceServers, 0)
   }
 
   useEffect(() => {

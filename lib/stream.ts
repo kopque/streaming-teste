@@ -1,5 +1,20 @@
 export const PEER_PREFIX = 'relay-v0-screen-'
 
+const DEFAULT_ICE: RTCIceServer[] = [
+  { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+]
+
+export async function fetchIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch('/api/ice', { cache: 'no-store' })
+    if (!res.ok) return DEFAULT_ICE
+    const data = (await res.json()) as { iceServers?: RTCIceServer[] }
+    return data.iceServers?.length ? data.iceServers : DEFAULT_ICE
+  } catch {
+    return DEFAULT_ICE
+  }
+}
+
 export type ChatMessage = {
   id: string
   name: string
