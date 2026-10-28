@@ -223,8 +223,23 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
   }, [phase])
 
   const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-    else shellRef.current?.requestFullscreen().catch(() => {})
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {})
+      return
+    }
+    const shell = shellRef.current
+    if (shell?.requestFullscreen) {
+      shell
+        .requestFullscreen()
+        .then(() => {
+          const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }
+          orientation?.lock?.('landscape').catch(() => {})
+        })
+        .catch(() => {})
+      return
+    }
+    const video = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
+    video?.webkitEnterFullscreen?.()
   }, [])
 
   useEffect(() => {
@@ -269,9 +284,15 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
     return (
       <div ref={shellRef} className="flex h-dvh flex-col bg-background">
         {!isFullscreen && (
-          <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-2 sm:px-4">
             <div className="flex items-center gap-4">
-              <Logo />
+              <span className="hidden sm:block">
+                <Logo />
+              </span>
+              <span className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground sm:hidden">
+                <Users className="size-3.5" aria-hidden="true" />
+                {viewerCount}
+              </span>
               <span className="hidden font-mono text-sm text-muted-foreground sm:inline">{formatCode(code)}</span>
               <span className="hidden items-center gap-1.5 font-mono text-xs text-muted-foreground sm:flex">
                 <Users className="size-3.5" aria-hidden="true" />
@@ -281,11 +302,14 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
             {renderToolbar()}
           </header>
         )}
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <div
             ref={stageRef}
             onClick={handleStageClick}
-            className={cn('group relative min-w-0 flex-1 bg-black', pointerMode && 'cursor-crosshair')}
+            className={cn(
+              'group relative min-h-0 min-w-0 flex-1 touch-manipulation bg-black',
+              pointerMode && 'cursor-crosshair',
+            )}
           >
             <video
               ref={videoRef}
@@ -321,13 +345,13 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
               </dl>
             )}
             {isFullscreen && (
-              <div className="absolute right-3 top-3 rounded-lg bg-black/70 p-1 opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <div className="absolute right-3 top-3 rounded-lg bg-black/70 p-1 backdrop-blur transition-opacity focus-within:opacity-100 md:opacity-0 md:group-hover:opacity-100">
                 {renderToolbar()}
               </div>
             )}
           </div>
           {chatOpen && !isFullscreen && (
-            <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-card md:flex">
+            <aside className="flex h-[38dvh] shrink-0 flex-col border-t border-border bg-card md:h-auto md:w-80 md:border-t-0 md:border-l">
               <h2 className="border-b border-border px-4 py-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 Chat
               </h2>
@@ -381,7 +405,7 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
             aria-label="Chat"
             title="Chat"
             onClick={() => setChatOpen((v) => !v)}
-            className={cn('hidden md:inline-flex', chatOpen && 'text-primary')}
+            className={cn(chatOpen && 'text-primary')}
           >
             <MessageSquare />
           </Button>
@@ -395,9 +419,9 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
         >
           {isFullscreen ? <Minimize /> : <Maximize />}
         </Button>
-        <Button variant="destructive" size="sm" onClick={leave} className="ml-1">
+        <Button variant="destructive" size="sm" onClick={leave} className="ml-1" aria-label="Sair">
           <LogOut />
-          Sair
+          <span className="hidden sm:inline">Sair</span>
         </Button>
       </div>
     )
@@ -447,7 +471,7 @@ export function ViewerSession({ initialCode }: { initialCode: string }) {
               maxLength={24}
               placeholder="Convidado"
               autoComplete="nickname"
-              className="h-10 rounded-lg border border-input bg-input/30 px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="h-10 rounded-lg border border-input bg-input/30 px-3 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring md:text-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />
           </div>
           {error && (

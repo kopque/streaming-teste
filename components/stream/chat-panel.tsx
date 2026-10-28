@@ -70,7 +70,7 @@ export function ChatPanel({
           disabled={disabled}
           placeholder={disabled ? 'Chat indisponível' : 'Escreva uma mensagem'}
           autoComplete="off"
-          className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-input/30 px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+          className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-input/30 px-3 text-base outline-none md:text-sm placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
         />
         <Button type="submit" size="icon-lg" disabled={disabled || !draft.trim()} aria-label="Enviar mensagem">
           <SendHorizontal />

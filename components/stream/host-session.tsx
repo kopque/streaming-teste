@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type Peer from 'peerjs'
 import type { DataConnection, MediaConnection } from 'peerjs'
-import { Check, Copy, Link2, MonitorUp, Radio, Square, Users, X } from 'lucide-react'
+import { Camera, Check, Copy, Link2, MonitorUp, Radio, Square, SwitchCamera, Users, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatPanel } from '@/components/stream/chat-panel'
 import { PingLayer, useElementSize, type Ping } from '@/components/stream/ping-layer'
@@ -24,6 +24,7 @@ import {
 import { cn } from '@/lib/utils'
 
 type Status = 'idle' | 'starting' | 'live'
+type Source = 'screen' | 'camera'
 type Viewer = { id: string; name: string; joinedAt: number }
 type Entry = { conn: DataConnection; call?: MediaConnection; name: string; joinedAt: number }
 
@@ -41,6 +42,15 @@ export function HostSession() {
   const [pings, setPings] = useState<Ping[]>([])
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 })
+  const [source, setSource] = useState<Source>('screen')
+  const [canShareScreen, setCanShareScreen] = useState(true)
+  const [facing, setFacing] = useState<'user' | 'environment'>('environment')
+
+  useEffect(() => {
+    const supported = Boolean(navigator.mediaDevices?.getDisplayMedia)
+    setCanShareScreen(supported)
+    if (!supported) setSource('camera')
+  }, [])
 
   const peerRef = useRef<Peer | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -199,24 +209,36 @@ export function HostSession() {
 
   async function start() {
     setError(null)
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      setError('Seu navegador não suporta captura de tela. Use Chrome, Edge ou Firefox no computador.')
+    if (source === 'screen' && !navigator.mediaDevices?.getDisplayMedia) {
+      setError('Este navegador não permite capturar a tela. Use a câmera ou transmita de um computador.')
+      return
+    }
+    if (source === 'camera' && !navigator.mediaDevices?.getUserMedia) {
+      setError('Este navegador não permite acessar a câmera. Abra o site em HTTPS no Chrome ou Safari.')
       return
     }
     setStatus('starting')
     const p = QUALITY_PRESETS[preset]
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: p.width }, height: { ideal: p.height }, frameRate: { ideal: p.fps, max: p.fps } },
-        audio: shareAudio,
-      })
+      stream =
+        source === 'screen'
+          ? await navigator.mediaDevices.getDisplayMedia({
+              video: { width: { ideal: p.width }, height: { ideal: p.height }, frameRate: { ideal: p.fps, max: p.fps } },
+              audio: shareAudio,
+            })
+          : await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: facing, width: { ideal: p.width }, height: { ideal: p.height }, frameRate: { ideal: p.fps } },
+              audio: shareAudio,
+            })
     } catch (err) {
       setStatus('idle')
       setError(
         err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'A captura de tela foi cancelada ou a permissão foi negada.'
-          : 'Não foi possível capturar a tela neste navegador.',
+          ? 'A captura foi cancelada ou a permissão foi negada.'
+          : source === 'screen'
+            ? 'Não foi possível capturar a tela neste navegador.'
+            : 'Não foi possível acessar a câmera.',
       )
       return
     }
@@ -246,6 +268,34 @@ export function HostSession() {
     const track = streamRef.current?.getVideoTracks()[0]
     if (track) track.contentHint = contentHint
   }, [contentHint])
+
+  async function flipCamera() {
+    const next = facing === 'user' ? 'environment' : 'user'
+    setFacing(next)
+    const stream = streamRef.current
+    if (!stream || source !== 'camera') return
+    const p = QUALITY_PRESETS[preset]
+    try {
+      const fresh = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: next, width: { ideal: p.width }, height: { ideal: p.height }, frameRate: { ideal: p.fps } },
+      })
+      const newTrack = fresh.getVideoTracks()[0]
+      newTrack.contentHint = contentHint
+      const oldTrack = stream.getVideoTracks()[0]
+      for (const entry of entriesRef.current.values()) {
+        const sender = entry.call?.peerConnection?.getSenders().find((s) => s.track?.kind === 'video')
+        await sender?.replaceTrack(newTrack)
+      }
+      if (oldTrack) {
+        stream.removeTrack(oldTrack)
+        oldTrack.stop()
+      }
+      stream.addTrack(newTrack)
+      if (videoRef.current) videoRef.current.srcObject = stream
+    } catch {
+      setError('Não foi possível trocar de câmera.')
+    }
+  }
 
   function kick(id: string) {
     entriesRef.current.get(id)?.conn.close()
@@ -292,7 +342,9 @@ export function HostSession() {
               <div className="flex flex-col gap-1">
                 <p className="text-lg font-medium text-balance">Pronto para transmitir</p>
                 <p className="max-w-sm text-sm text-muted-foreground text-pretty">
-                  Escolha uma tela, janela ou aba. Você recebe um código para compartilhar com quem vai assistir.
+                  {source === 'screen'
+                    ? 'Escolha uma tela, janela ou aba. Você recebe um código para compartilhar com quem vai assistir.'
+                    : 'Sua câmera será transmitida. Você recebe um código para compartilhar com quem vai assistir.'}
                 </p>
               </div>
             </div>
@@ -317,12 +369,20 @@ export function HostSession() {
                 : 'Configure a qualidade e inicie a transmissão.'}
           </p>
           {live || status === 'starting' ? (
-            <Button variant="destructive" size="lg" onClick={stop}>
-              <Square className="fill-current" />
-              Encerrar transmissão
-            </Button>
+            <div className="flex w-full gap-2 sm:w-auto">
+              {source === 'camera' && live && (
+                <Button variant="outline" size="lg" onClick={flipCamera} aria-label="Trocar câmera">
+                  <SwitchCamera />
+                  <span className="hidden sm:inline">Trocar câmera</span>
+                </Button>
+              )}
+              <Button variant="destructive" size="lg" onClick={stop} className="flex-1 sm:flex-none">
+                <Square className="fill-current" />
+                Encerrar transmissão
+              </Button>
+            </div>
           ) : (
-            <Button size="lg" onClick={start}>
+            <Button size="lg" onClick={start} className="w-full sm:w-auto">
               <Radio />
               Iniciar transmissão
             </Button>
@@ -351,6 +411,45 @@ export function HostSession() {
               {copied === 'link' ? 'Copiado' : 'Copiar link'}
             </Button>
           </div>
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-4" aria-labelledby="source-title">
+          <h2 id="source-title" className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            Fonte
+          </h2>
+          <div role="radiogroup" aria-labelledby="source-title" className="mt-3 grid grid-cols-2 gap-2">
+            {(
+              [
+                ['screen', 'Tela', MonitorUp],
+                ['camera', 'Câmera', Camera],
+              ] as const
+            ).map(([value, label, Icon]) => {
+              const disabled = status !== 'idle' || (value === 'screen' && !canShareScreen)
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={source === value}
+                  disabled={disabled}
+                  onClick={() => setSource(value)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
+                    source === value ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50',
+                  )}
+                >
+                  <Icon className="size-4" aria-hidden="true" />
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          {!canShareScreen && (
+            <p className="mt-3 text-xs text-muted-foreground text-pretty">
+              Navegadores de celular não permitem capturar a tela. Transmita pela câmera ou use um computador para
+              compartilhar a tela — assistir funciona normalmente no celular.
+            </p>
+          )}
         </section>
 
         <section className="rounded-xl border border-border bg-card p-4" aria-labelledby="quality-title">
@@ -410,7 +509,7 @@ export function HostSession() {
           </div>
 
           <label className="mt-4 flex items-center justify-between gap-3 text-sm">
-            Compartilhar áudio do sistema
+            {source === 'screen' ? 'Compartilhar áudio do sistema' : 'Transmitir microfone'}
             <input
               type="checkbox"
               checked={shareAudio}
