@@ -10,6 +10,9 @@ export const metadata: Metadata = {
   title: 'Relay · Streaming de tela em tempo real',
   description:
     'Transmita sua tela com baixa latência direto do navegador. Ponto a ponto via WebRTC, até 1440p a 60 FPS, sem instalação.',
+  verification: {
+  google: 'xB2gl2oiKmXNdh0ezta6F5SeNJ2dbFw0wvBfrqXzkIY',
+  },
   generator: 'v0.app',
   icons: {
     icon: [
