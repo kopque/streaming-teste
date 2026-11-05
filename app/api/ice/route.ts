@@ -4,6 +4,14 @@ const FALLBACK_ICE: RTCIceServer[] = [
   { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
 ]
 
+function configuredTurn(): RTCIceServer[] {
+  const urls = process.env.TURN_URLS?.split(',').map((url) => url.trim()).filter(Boolean)
+  const username = process.env.TURN_USERNAME
+  const credential = process.env.TURN_CREDENTIAL
+  if (!urls?.length || !username || !credential) return []
+  return [{ urls, username, credential }]
+}
+
 async function cloudflareIce(): Promise<RTCIceServer[] | null> {
   const keyId = process.env.CLOUDFLARE_TURN_KEY_ID
   const token = process.env.CLOUDFLARE_TURN_API_TOKEN
@@ -35,12 +43,14 @@ async function meteredIce(): Promise<RTCIceServer[] | null> {
 export async function GET() {
   let turn: RTCIceServer[] | null = null
   try {
-    turn = (await cloudflareIce()) ?? (await meteredIce())
+    turn = configuredTurn()
+    if (!turn.length) turn = (await cloudflareIce()) ?? (await meteredIce())
   } catch {
     turn = null
   }
+  const servers = [...FALLBACK_ICE, ...(turn ?? [])]
   return NextResponse.json(
-    { iceServers: [...FALLBACK_ICE, ...(turn ?? [])], relay: Boolean(turn) },
+    { iceServers: servers, relay: Boolean(turn?.length) },
     { headers: { 'Cache-Control': 'no-store' } },
   )
 }
